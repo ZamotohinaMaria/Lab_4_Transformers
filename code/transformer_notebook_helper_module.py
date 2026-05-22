@@ -210,5 +210,42 @@ def csv_2_Dictionary(csv_path: str, n_samples = 30000 ):  # 60000 - for part
     return src_dictionary, tgt_dictionary
 
 
-def parquet_opus_to_Dictionary( file_path, source_lang='en', target_lang='ru', n_samples = 30000 ): # Специальная версия для датасетов OPUS (как opus_books)
-    pass
+def parquet_opus_to_Dictionary(file_path: str, source_lang: str = 'en',
+                               target_lang: str = 'ru', n_samples: int = 30000):
+    # Специальная версия для датасетов OPUS (как opus_books)
+    df = pd.read_parquet(file_path)
+    if 'translation' not in df.columns:
+        raise ValueError("Column 'translation' is not found in parquet file")
+
+    df = df.sample(frac=1, random_state=3407)
+    if n_samples is not None:
+        df = df.iloc[:n_samples, :]
+
+    translations = df['translation']
+    src_sentences, tgt_sentences = [], []
+
+    for row in translations.values:
+        if not isinstance(row, dict):
+            continue
+
+        src_text = row.get(source_lang, None)
+        tgt_text = row.get(target_lang, None)
+        if src_text is None or tgt_text is None:
+            continue
+
+        src_text = str(src_text).strip()
+        tgt_text = str(tgt_text).strip()
+        if len(src_text) == 0 or len(tgt_text) == 0:
+            continue
+
+        src_sentences.append(src_text)
+        tgt_sentences.append(tgt_text)
+
+    if len(src_sentences) == 0:
+        raise ValueError(
+            f'No valid sentence pairs for languages: {source_lang}->{target_lang}')
+
+    src_dictionary = Dictionary(np.array(src_sentences))
+    tgt_dictionary = Dictionary(
+        np.array(tgt_sentences), add_sos_token=True, add_eos_token=True)
+    return src_dictionary, tgt_dictionary

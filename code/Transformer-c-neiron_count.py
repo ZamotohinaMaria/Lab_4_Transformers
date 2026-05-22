@@ -9,7 +9,7 @@ torch.cuda.manual_seed(3407)
 np.random.seed(3407)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
-
+FFN_DIV = 2  # 2 or 4
 
 class PosEmbedding(nn.Module):
     def __init__(self, h: int, padding_idx: int, n: int = 1000):
@@ -126,11 +126,12 @@ class TransformerEncoderLayer(nn.Module):
 
         self.self_attention = MultiHeadedAttention(self.n_heads, self.input_dim, self.dropout)
         self.norm1 = nn.LayerNorm(self.input_dim)
-
+        
+        hidden_dim = max(1, self.dim_feedforward // FFN_DIV)
         self.pointwise_ffn = nn.Sequential(
-            nn.Linear(self.input_dim, self.dim_feedforward),
+            nn.Linear(self.input_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.dim_feedforward, self.input_dim)
+            nn.Linear(hidden_dim, self.input_dim)
         )
         self.norm2 = nn.LayerNorm(self.input_dim)
         self.dropout_layer = nn.Dropout(self.dropout)
@@ -203,10 +204,11 @@ class TransformerDecoderLayer(nn.Module):
         self.cross_attention = MultiHeadedAttention(self.n_heads, self.input_dim, self.dropout)
         self.norm2 = nn.LayerNorm(self.input_dim)
 
+        hidden_dim = max(1, self.dim_feedforward // FFN_DIV)
         self.pointwise_ffn = nn.Sequential(
-            nn.Linear(self.input_dim, self.dim_feedforward),
+            nn.Linear(self.input_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.dim_feedforward, self.input_dim)
+            nn.Linear(hidden_dim, self.input_dim)
         )
         self.norm3 = nn.LayerNorm(self.input_dim)
         self.dropout_layer = nn.Dropout(self.dropout)

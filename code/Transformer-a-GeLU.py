@@ -129,7 +129,7 @@ class TransformerEncoderLayer(nn.Module):
 
         self.pointwise_ffn = nn.Sequential(
             nn.Linear(self.input_dim, self.dim_feedforward),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(self.dim_feedforward, self.input_dim)
         )
         self.norm2 = nn.LayerNorm(self.input_dim)
@@ -205,7 +205,7 @@ class TransformerDecoderLayer(nn.Module):
 
         self.pointwise_ffn = nn.Sequential(
             nn.Linear(self.input_dim, self.dim_feedforward),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(self.dim_feedforward, self.input_dim)
         )
         self.norm3 = nn.LayerNorm(self.input_dim)

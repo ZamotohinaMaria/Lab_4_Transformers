@@ -10,6 +10,7 @@ np.random.seed(3407)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
+LN_MODE = 'post'  # 'post' or 'pre'
 
 class PosEmbedding(nn.Module):
     def __init__(self, h: int, padding_idx: int, n: int = 1000):
@@ -137,14 +138,19 @@ class TransformerEncoderLayer(nn.Module):
 
     def forward(self, x: torch.FloatTensor,
                 src_padding_mask: Optional[torch.FloatTensor] = None):
+        if LN_MODE == 'pre':
+            x_norm = self.norm1(x)
+            attn = self.self_attention(x_norm, x_norm, x_norm, src_padding_mask)
+            x = x + attn
+            x_norm = self.norm2(x)
+            output = self.pointwise_ffn(x_norm)
+            return self.dropout_layer(output + x)
+
         attn = self.self_attention(x, x, x, src_padding_mask)
         x = self.norm1(x + attn)
-
         output = self.pointwise_ffn(x)
-        output += x
-        output = self.norm2(output)
-        output = self.dropout_layer(output)
-        return output
+        output = self.norm2(output + x)
+        return self.dropout_layer(output)
 
 
 class TransformerEncoder(nn.Module):
@@ -217,18 +223,26 @@ class TransformerDecoderLayer(nn.Module):
                 src_padding_mask: Optional[torch.FloatTensor] = None,
                 tgt_padding_mask: Optional[torch.FloatTensor] = None,
                 attention_mask: Optional[torch.FloatTensor] = None):
+        if LN_MODE == 'pre':
+            x_norm = self.norm1(x)
+            attn1 = self.self_attention(x_norm, x_norm, x_norm, tgt_padding_mask, attention_mask)
+            x = x + attn1
+
+            x_norm = self.norm2(x)
+            attn2 = self.cross_attention(x_norm, encoder_output, encoder_output, src_padding_mask)
+            x = x + attn2
+
+            x_norm = self.norm3(x)
+            output = self.pointwise_ffn(x_norm)
+            return self.dropout_layer(output + x)
+
         attn1 = self.self_attention(x, x, x, tgt_padding_mask, attention_mask)
         x = self.norm1(x + attn1)
-
-        attn2 = self.cross_attention(
-            x, encoder_output, encoder_output, src_padding_mask)
+        attn2 = self.cross_attention(x, encoder_output, encoder_output, src_padding_mask)
         x = self.norm2(x + attn2)
-
         output = self.pointwise_ffn(x)
-        output += x
-        output = self.norm3(output)
-        output = self.dropout_layer(output)
-        return output
+        output = self.norm3(output + x)
+        return self.dropout_layer(output)
 
 
 class TransformerDecoder(nn.Module):
