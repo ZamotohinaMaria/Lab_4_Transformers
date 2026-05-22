@@ -1,0 +1,24 @@
+# 1) Создать окружение с Python 3.10
+conda create -n transformers_py310 python=3.10 -y
+
+# 2) Активировать окружение
+conda activate transformers_py310
+
+# 3) (Опционально) Проверить версию Python
+python --version
+
+conda install pandas scikit-learn matplotlib tqdm pyarrow -y
+pip install torch
+
+
+как выевсти всех установленных пакетов в моем виртуальном окружении
+10:06 PM
+
+
+# если окружение уже активировано
+conda list
+# если окружение НЕ активировано
+conda list -n transformers_py310
+Сохранить список в файл:
+
+conda list -n transformers_py310 > packages.txt
