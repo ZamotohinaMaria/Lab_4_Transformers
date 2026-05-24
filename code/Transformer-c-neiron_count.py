@@ -9,7 +9,7 @@ torch.cuda.manual_seed(3407)
 np.random.seed(3407)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
-FFN_DIV = 2  # 2 or 4
+FFN_DIV = 4  # 2 or 4
 
 class PosEmbedding(nn.Module):
     def __init__(self, h: int, padding_idx: int, n: int = 1000):

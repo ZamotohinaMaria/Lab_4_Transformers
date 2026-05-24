@@ -34,7 +34,7 @@ MODEL_PARAMS_DIR = os.path.join(PROJECT_ROOT, 'model_params')
 # 'Transformer-b-LN_pre_post.py'       - point b
 # 'Transformer-c-neiron_count.py'      - point c
 # 'Transformer-d-MHA_head_count.py'    - point d
-TRANSFORMER_FILE = 'Transformer.py'
+TRANSFORMER_FILE = 'Transformer-d-MHA_head_count.py'
 
 # DATASET_KIND: 'csv' or 'parquet'
 DATASET_KIND = 'csv'
@@ -46,22 +46,23 @@ PARQUET_TARGET_LANG = 'ru'
 
 TRAIN_SIZE = 0.90
 BATCH_SIZE = 256
-N_WORKERS = 0
+N_WORKERS = 0 # 0 - загрузка данных в основном процессе, > 0 - распараллеливание
 
 # Model hyperparameters
-H_DIM = 256
+H_DIM = 256 # Размер скрытого пространства/эмбеддинга. Больше: обычно лучше качество, но медленнее и тяжелее по памяти.
 N_ENCODERS = 1
 N_DECODERS = 1
-N_HEADS = 8
+N_HEADS = 16
 DROPOUT = 0.10
-DIM_FEEDFORWARD = 2048
+DIM_FEEDFORWARD = 2048 # Ширина FFN внутри слоя.
 
 # Training hyperparameters
 LR = 5e-4
 EPOCHS = 10
-LR_STEP_SIZE = 10
-LR_GAMMA = 0.4
+LR_STEP_SIZE = 10 # Через сколько эпох снижать LR
+LR_GAMMA = 0.4 # Коэффициент снижения LR.
 
+# динамически загрузить класс Seq2seqTransformer из выбранного файла (Transformer.py, Transformer-a-..., Transformer-b-... и т.д.).
 def load_seq2seq_transformer_class(transformer_filename: str):
     transformer_path = os.path.join(SCRIPT_DIR, transformer_filename)
     if not os.path.isfile(transformer_path):
@@ -78,16 +79,16 @@ def load_seq2seq_transformer_class(transformer_filename: str):
         )
     return module.Seq2seqTransformer
 
-
+# Назначение: сформировать путь, куда сохранять лучшую модель.
 def build_best_model_path(run_basename: str):
     filename = f'model_{run_basename}.pth.tar'
     return os.path.join(MODEL_PARAMS_DIR, filename)
 
-
+# Назначение: вытащить короткое имя папки датасета из пути (en_fr, en_ru, de_en).
 def get_dataset_folder_name(dataset_path: str):
     return os.path.basename(os.path.dirname(os.path.normpath(dataset_path)))
 
-
+# Назначение: единая “база имени” для всех артефактов запуска.
 def build_run_basename(
         dataset_path: str, h_dim: int, n_heads: int, dim_feedforward: int,
         transformer_file: str, run_dt: datetime = None):
@@ -99,7 +100,7 @@ def build_run_basename(
         f'_run_{transformer_tag}_{dataset_folder}_{timestamp}'
     )
 
-
+# Назначение: дублировать весь вывод в консоль и файл одновременно (tee-поведение).
 class TeeStream:
     def __init__(self, *streams):
         self.streams = streams
@@ -114,7 +115,7 @@ class TeeStream:
         for stream in self.streams:
             stream.flush()
 
-
+# Назначение: сохранить метрики по эпохам в CSV.
 def save_training_metrics(
         train_losses, test_losses, train_ppls, test_ppls,
         run_basename: str,
@@ -137,7 +138,7 @@ def save_training_metrics(
     print(f'training metrics saved to: {output_path}')
     return output_path
 
-
+# Назначение: выбрать источник данных (csv или parquet) и вернуть src_dictionary, tgt_dictionary.
 def load_dictionaries():
     if DATASET_KIND == 'csv':
         return csv_2_Dictionary(DATASET_PATH, N_SAMPLES)
@@ -147,7 +148,12 @@ def load_dictionaries():
         )
     raise ValueError("DATASET_KIND must be 'csv' or 'parquet'")
 
-
+# Назначение: качественная проверка модели на примерах (текст против текста).
+# Генерирует перевод через pipeline.translate(...).
+# Переводит индексы обратно в слова (vec2Sentence).
+# Печатает пары:
+# model translation
+# actual translation
 def log_results(pipeline, src_dictionary, tgt_dictionary, src_vectors, tgt_vectors):
     translated_vector = pipeline.translate(
         src_vectors,
@@ -166,6 +172,7 @@ def log_results(pipeline, src_dictionary, tgt_dictionary, src_vectors, tgt_vecto
 
 def main(run_basename: str):
     start_time = time.time()
+    # Загружает выбранный класс трансформера
     seq2seq_cls = load_seq2seq_transformer_class(TRANSFORMER_FILE)
     best_model_path = build_best_model_path(run_basename)
     print(f"TRANSFORMER_FILE = {TRANSFORMER_FILE}")
@@ -187,7 +194,8 @@ def main(run_basename: str):
     test_dataloader = DataLoader(
         test_dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=N_WORKERS
     )
-
+    
+    # Вычисление размеров словарей и padding_idx.
     src_vocab_size = len(src_dictionary.word2idx)
     tgt_vocab_size = len(tgt_dictionary.word2idx)
     src_padding_idx = src_dictionary.word2idx['<pad>']
@@ -196,6 +204,7 @@ def main(run_basename: str):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print("DEVICE =", device)
 
+    # Создание модели с нужными гиперпараметрами.
     transformer = seq2seq_cls(
         H_DIM,
         n_encoders=N_ENCODERS,
@@ -210,11 +219,18 @@ def main(run_basename: str):
         device=device
     )
 
+    # Adam — алгоритм обновления весов.
     optimizer = torch.optim.Adam(transformer.parameters(), lr=LR)
+    # Функция ошибки для многоклассовой классификации по словарю.
     lossfunc = nn.CrossEntropyLoss()
+    
+    # Планировщик learning rate.
+    # Каждые LR_STEP_SIZE эпох умножает lr на LR_GAMMA.
+    # Нужен, чтобы на поздних этапах обучаться “аккуратнее”.
     lr_scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, LR_STEP_SIZE, gamma=LR_GAMMA
     )
+    # Объединяет модель, loss и optimizer в единый объект.
     pipeline = FitterPipeline(transformer, lossfunc, optimizer)
 
     train_losses, train_ppls = [], []
@@ -236,6 +252,7 @@ def main(run_basename: str):
 
             lr_scheduler.step()
 
+            # Если test loss улучшился -> сохранить модель.
             if test_loss < best_loss:
                 best_loss = test_loss
                 model_name = os.path.basename(best_model_path)
@@ -243,21 +260,21 @@ def main(run_basename: str):
                 print(f'model_saved at epoch: {epoch} | best_loss: {best_loss:.3f}')
             print('\n\n')
 
-        fig, axs = plt.subplots(1, 2, figsize=(20, 7))
-        axs[0].plot(train_losses, label='training loss')
-        axs[0].plot(test_losses, label='testing loss')
-        axs[0].set_xlabel('epochs')
-        axs[0].set_ylabel('Loss')
-        axs[0].set_title('Loss Plot')
-        axs[0].legend()
+        # fig, axs = plt.subplots(1, 2, figsize=(20, 7))
+        # axs[0].plot(train_losses, label='training loss')
+        # axs[0].plot(test_losses, label='testing loss')
+        # axs[0].set_xlabel('epochs')
+        # axs[0].set_ylabel('Loss')
+        # axs[0].set_title('Loss Plot')
+        # axs[0].legend()
 
-        axs[1].plot(train_ppls, label='training PPL')
-        axs[1].plot(test_ppls, label='testing PPL')
-        axs[1].set_xlabel('epochs')
-        axs[1].set_ylabel('PPL')
-        axs[1].set_title('Perplexity in Language')
-        axs[1].legend()
-        plt.tight_layout()
+        # axs[1].plot(train_ppls, label='training PPL')
+        # axs[1].plot(test_ppls, label='testing PPL')
+        # axs[1].set_xlabel('epochs')
+        # axs[1].set_ylabel('PPL')
+        # axs[1].set_title('Perplexity in Language')
+        # axs[1].legend()
+        # plt.tight_layout()
 
         save_training_metrics(
             train_losses, test_losses, train_ppls, test_ppls,
@@ -280,6 +297,8 @@ def main(run_basename: str):
                 "Train model first or set RUN_INFERENCE=False."
             )
 
+        # Загружает лучший checkpoint с диска.
+        # Прогоняет log_results на 10 train и 10 test примерах.
         src_vectors = train_dataset[0:10][0]
         tgt_vectors = train_dataset[0:10][1].numpy()
         log_results(pipeline, src_dictionary, tgt_dictionary, src_vectors, tgt_vectors)

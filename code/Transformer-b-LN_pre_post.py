@@ -10,7 +10,7 @@ np.random.seed(3407)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-LN_MODE = 'post'  # 'post' or 'pre'
+LN_MODE = 'pre'  # 'post' or 'pre'
 
 class PosEmbedding(nn.Module):
     def __init__(self, h: int, padding_idx: int, n: int = 1000):
@@ -138,6 +138,7 @@ class TransformerEncoderLayer(nn.Module):
 
     def forward(self, x: torch.FloatTensor,
                 src_padding_mask: Optional[torch.FloatTensor] = None):
+        # Модификаци 9.1 стр 15
         if LN_MODE == 'pre':
             x_norm = self.norm1(x)
             attn = self.self_attention(x_norm, x_norm, x_norm, src_padding_mask)
@@ -223,6 +224,7 @@ class TransformerDecoderLayer(nn.Module):
                 src_padding_mask: Optional[torch.FloatTensor] = None,
                 tgt_padding_mask: Optional[torch.FloatTensor] = None,
                 attention_mask: Optional[torch.FloatTensor] = None):
+        # Модификаци 9.1 стр 15
         if LN_MODE == 'pre':
             x_norm = self.norm1(x)
             attn1 = self.self_attention(x_norm, x_norm, x_norm, tgt_padding_mask, attention_mask)

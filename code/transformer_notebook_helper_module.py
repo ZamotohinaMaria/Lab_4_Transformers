@@ -142,28 +142,48 @@ class FitterPipeline:
         self.model.train()
         avg_loss = 0
         for i, (src, tgt) in tqdm.tqdm(enumerate(dataloader)):
+            # отправляем данные в cuda
             src = src.to(device)
             tgt = tgt.to(device)
 
+            # обнуляем градиенты
             self.model.zero_grad()
+            
+            # убираем помледний и первый элемент для декодера, чтобы предсказать следующйи элемент
+            # Идея:
 
+            # Декодер на каждом шаге должен предсказывать следующий токен.
+            # Поэтому вход и цель сдвигают на 1.
+            # Как именно:
+
+            # tgt[:, :-1] — вход декодера (без последнего токена).
+            # tgt[:, 1:] — правильный ответ (без первого токена).
+            # Пример:
+
+            # исходный tgt: <sos> I love cats <eos>
+            # вход декодера: <sos> I love cats
+            # цель для loss: I love cats <eos>
             output = self.model(src, tgt[:, :-1])
             tgt = tgt[:, 1:]
             tgt = tgt.type(torch.LongTensor).reshape(-1)
             output = output.reshape(-1, output.shape[-1])
+            # считаем потери loss
             loss = self.lossfunc(output.cpu(), tgt)
             avg_loss += loss.item()
-            loss.backward()
-            self.optimizer.step()
+            # Обратное распростарение ошибки
+            loss.backward() # считаем новые градиенты
+            self.optimizer.step() # обновляем веса по этим градиентам
         avg_loss = avg_loss / (i + 1)
-        PPL = math.exp(avg_loss)
+        PPL = math.exp(avg_loss) # считаем перплексию стр 23
         if verbose: print(f'training loss: {avg_loss:.3f} | training PPL: {PPL:7.3f}')
         return avg_loss, PPL
-
+    
+    # Валидация, то же что и трайн но без вычисления градиентов для скорости
     def test(
             self, dataloader: DataLoader, verbose: bool = False, device: str = 'cpu'):
         self.model.eval()
         avg_loss = 0
+        # отключает вычисление градиентов
         with torch.no_grad():
             for i, (src, tgt) in tqdm.tqdm(enumerate(dataloader)):
                 src = src.to(device)
@@ -180,6 +200,15 @@ class FitterPipeline:
         return avg_loss, PPL
 
     def translate(self, src: torch.IntTensor, sos_token: int, target_len: int):
+        # означает:
+
+        # взять первый параметр модели,
+        # узнать, на каком устройстве он находится,
+        # использовать это же устройство для входных данных/промежуточных тензоров.
+        # Зачем:
+
+        # чтобы не было ошибки “tensor on CPU, model on CUDA”,
+        # чтобы всё считалось на одном устройстве.
         device = next(self.model.parameters()).device
         src = src.to(device)
         batch_size, _ = src.shape
@@ -188,16 +217,20 @@ class FitterPipeline:
         translations[:, 0] = sos_token
 
         for i in tqdm.tqdm(range(1, target_len)):
+            # берем уже сгенерированный префикс (что модель “написала” до этого шага).
             tgt = translations[:, 0:i]
+            # запускаем модель: она дает прогнозы для всех позиций текущего tgt.
             out = self.model(src, tgt)
+            # для каждой позиции выбираем самый вероятный токен.
             out = torch.argmax(out, dim=-1)
+            # берем прогноз последней позиции (новый токен) и записываем его в текущий шаг i
             translations[:, i] = out[:, -1]
         return translations[:, 1:]
 
 
 #----------------------------------------------------------------------------------------------------------------------
 
-def csv_2_Dictionary(csv_path: str, n_samples = 30000 ):  # 60000 - for part
+def csv_2_Dictionary(csv_path: str, n_samples = 30000 ):  # 60000 - for partС
     df = pd.read_csv(csv_path)
     df = df.sample(frac=1)
     df = df.iloc[:n_samples, :]  # for part
